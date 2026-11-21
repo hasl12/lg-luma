@@ -59,6 +59,8 @@ pub enum Page {
 pub enum Target {
     MarketSymbol(HomeWidget),
     MarketCurrency,
+    TraktItem(usize),
+    TraktAccount,
     Nav(usize),
     InputsMenu,
     SettingsMenu,
@@ -174,12 +176,14 @@ pub enum Overlay {
     BackgroundDelete { id: String, restore: Target },
     WidgetOptions { cell: usize },
     WidgetCatalog { cell: usize, restore: Target },
+    TraktLogin,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum Subpage {
     Market(HomeWidget),
     WidgetPosition(HomeWidget),
+    Trakt,
     Greeting,
     DateFormat,
     Weather,
@@ -227,6 +231,11 @@ pub enum Effect {
     /// Refresh apps: read the inventory and every app icon again.
     Reload,
     Launch(String),
+    /// Launch with application parameters, such as a deep link.
+    LaunchWith {
+        id: String,
+        params: serde_json::Value,
+    },
     Uninstall(String),
     DeleteWallpaper(String),
     Recent {
@@ -251,6 +260,7 @@ pub struct State {
     pub active_weather: HomeWidget,
     pub extra_weather: Vec<weather::Weather>,
     pub markets: crate::markets::Markets,
+    pub trakt: crate::trakt::Trakt,
     pub page: Page,
     pub focus: Target,
     pub inventory: Inventory,
@@ -355,6 +365,7 @@ impl State {
             panel_started: None,
             weather: weather::Weather::default(),
             markets: crate::markets::Markets::default(),
+            trakt: crate::trakt::Trakt::default(),
             active_weather: HomeWidget::Weather,
             widget_position_cell: 0,
             extra_weather: (0..HOME_GRID_CELLS)
@@ -997,6 +1008,66 @@ impl State {
         self.dirty = true;
     }
 
+    /// Continue-watching cards that remote focus can reach on Home.
+    pub fn trakt_cards(&self) -> usize {
+        if self.trakt.available
+            && self.trakt.connected == Some(true)
+            && self.preferences.has_widget(HomeWidget::Trakt)
+        {
+            self.trakt.items.len()
+        } else {
+            0
+        }
+    }
+
+    fn weather_setup_shown(&self) -> bool {
+        self.preferences.weather_visible() && self.preferences.weather_location.is_none()
+    }
+
+    /// The card nearest horizontally to the focused control, for moving up from the dock.
+    fn nearest_trakt_card(&self, controls: &[Control]) -> Target {
+        let center = |target: &Target| {
+            controls
+                .iter()
+                .find(|control| control.target == *target)
+                .map(|control| control.rect.center().0)
+        };
+        let from = center(&self.focus);
+        (0..self.trakt_cards())
+            .min_by(|a, b| {
+                let distance = |index: &usize| match (from, center(&Target::TraktItem(*index))) {
+                    (Some(from), Some(to)) => (from - to).abs(),
+                    _ => *index as f32,
+                };
+                distance(a).total_cmp(&distance(b))
+            })
+            .map_or_else(|| self.first_input_target(), Target::TraktItem)
+    }
+
+    /// Applies worker results that need page state: a finished login closes its dialog and
+    /// removed cards move focus.
+    pub fn sync_trakt(&mut self) {
+        if matches!(self.overlay, Some(Overlay::TraktLogin))
+            && self.trakt.connected == Some(true)
+            && self.trakt.login == crate::trakt::Login::Idle
+        {
+            self.overlay = None;
+            self.focus = Target::TraktAccount;
+            self.pressed = None;
+            self.dirty = true;
+        }
+        if let Target::TraktItem(index) = self.focus
+            && index >= self.trakt_cards()
+        {
+            self.focus = match self.trakt_cards() {
+                0 if self.page == Page::Home => self.first_content(),
+                0 => self.first_input_target(),
+                count => Target::TraktItem(count - 1),
+            };
+            self.dirty = true;
+        }
+    }
+
     pub fn reconcile_focus(&mut self) {
         if self.page == Page::Home {
             self.scroll_favorites(0.);
@@ -1369,6 +1440,7 @@ impl State {
             Some(Subpage::WidgetPosition(widget)) => {
                 Target::WidgetCell(self.preferences.widget_position(widget).cell())
             }
+            Some(Subpage::Trakt) => Target::WidgetCell(self.preferences.trakt.position.cell()),
             Some(Subpage::Greeting) => {
                 Target::WidgetCell(self.preferences.greeting_position.cell())
             }
@@ -1550,7 +1622,7 @@ impl State {
         }
         if matches!(
             self.overlay,
-            Some(Overlay::WallpaperUpload | Overlay::TileEditor)
+            Some(Overlay::WallpaperUpload | Overlay::TileEditor | Overlay::TraktLogin)
         ) {
             return vec![];
         }
@@ -1636,6 +1708,13 @@ impl State {
                         targets[(index + 1).min(targets.len() - 1)].clone(),
                         controls,
                     ),
+                    Direction::Down
+                        if self.page == Page::Home
+                            && self.trakt_cards() > 0
+                            && !self.weather_setup_shown() =>
+                    {
+                        self.focus(Target::TraktItem(0), controls)
+                    }
                     Direction::Down if self.page == Page::Home && self.dock_apps().is_empty() => {
                         self.open(1);
                         self.focus = self.first_content();
@@ -1677,8 +1756,37 @@ impl State {
                     return vec![];
                 }
             }
+            if self.page == Page::Home
+                && let Target::TraktItem(index) = self.focus
+            {
+                let count = self.trakt_cards();
+                match direction {
+                    Direction::Left if index > 0 => {
+                        self.focus(Target::TraktItem(index - 1), controls)
+                    }
+                    Direction::Right if index + 1 < count => {
+                        self.focus(Target::TraktItem(index + 1), controls)
+                    }
+                    Direction::Up if self.weather_setup_shown() => {
+                        self.focus(Target::WeatherConfigure, controls)
+                    }
+                    Direction::Up => self.focus(self.first_input_target(), controls),
+                    Direction::Down if !self.dock_apps().is_empty() => {
+                        self.focus(self.first_content(), controls)
+                    }
+                    Direction::Down => {
+                        self.open(1);
+                        self.focus = self.first_content();
+                    }
+                    _ => {}
+                }
+                return vec![];
+            }
             if self.page == Page::Home && self.focus == Target::WeatherConfigure {
                 match direction {
+                    Direction::Down if self.trakt_cards() > 0 => {
+                        self.focus(Target::TraktItem(0), controls)
+                    }
                     Direction::Down
                         if self.focus == Target::WeatherConfigure
                             && !self.dock_apps().is_empty() =>
@@ -1709,6 +1817,9 @@ impl State {
                             let id = apps[next].id.clone();
                             self.focus(Target::App(id), controls);
                         }
+                        Direction::Up if self.trakt_cards() > 0 => {
+                            self.focus(self.nearest_trakt_card(controls), controls)
+                        }
                         Direction::Up => self.focus(
                             if index < 3 {
                                 self.first_input_target()
@@ -1731,6 +1842,7 @@ impl State {
                     Some(&[Target::MarketSymbol(kind), Target::MarketCurrency])
                 }
                 Some(Subpage::Market(kind)) => Some(&[Target::MarketSymbol(kind)]),
+                Some(Subpage::Trakt) => Some(&[Target::TraktAccount]),
                 Some(Subpage::Greeting) => Some(&[
                     Target::DateToggle,
                     Target::DateFormat,
@@ -2713,6 +2825,26 @@ impl State {
                 self.open_keyboard(TextField::Apps);
             }
             Target::MarketSymbol(kind) => self.open_keyboard(TextField::Market(kind)),
+            Target::TraktItem(index) if !self.launching => {
+                if let Some(item) = self.trakt.items.get(index) {
+                    return vec![Effect::LaunchWith {
+                        id: crate::trakt::NUVIO_APP.into(),
+                        params: item.launch_params(),
+                    }];
+                }
+            }
+            Target::TraktAccount => {
+                if self.trakt.connected == Some(true) {
+                    self.trakt.send(crate::trakt::Command::Logout);
+                    self.notify(self.preferences.language.t("traktDisconnected"));
+                } else {
+                    self.trakt.send(crate::trakt::Command::Login);
+                    self.overlay = Some(Overlay::TraktLogin);
+                    self.focus = Target::CloseDialog;
+                    self.pressed = None;
+                    self.panel_started = (!self.preferences.reduced_motion).then(Instant::now);
+                }
+            }
             Target::MarketCurrency => {
                 let kind = if let Some(Subpage::Market(kind)) = self.subpage {
                     kind
@@ -2934,12 +3066,14 @@ impl State {
                     HomeWidget::Greeting => Subpage::Greeting,
                     HomeWidget::Weather => Subpage::Weather,
                     HomeWidget::Crypto | HomeWidget::Stocks => Subpage::Market(widget),
+                    HomeWidget::Trakt => Subpage::Trakt,
                     _ => unreachable!(),
                 });
                 self.focus = match widget.kind() {
                     HomeWidget::Greeting => Target::DateToggle,
                     HomeWidget::Weather => Target::WeatherLocation,
                     HomeWidget::Crypto | HomeWidget::Stocks => Target::MarketSymbol(widget),
+                    HomeWidget::Trakt => Target::TraktAccount,
                     _ => unreachable!(),
                 };
                 self.scroll = 0.;
@@ -3301,6 +3435,7 @@ impl State {
                     Some(
                         Subpage::WeatherLocation
                         | Subpage::Market(_)
+                        | Subpage::Trakt
                         | Subpage::Greeting
                         | Subpage::Clock
                         | Subpage::AppDrawer
@@ -3509,6 +3644,14 @@ impl State {
             if matches!(overlay, Overlay::WallpaperUpload) {
                 self.wallpaper_upload = None;
                 self.focus = Target::UploadWallpaper;
+                self.pressed = None;
+                return vec![];
+            }
+            if matches!(overlay, Overlay::TraktLogin) {
+                if self.trakt.login != crate::trakt::Login::Idle {
+                    self.trakt.send(crate::trakt::Command::CancelLogin);
+                }
+                self.focus = Target::TraktAccount;
                 self.pressed = None;
                 return vec![];
             }

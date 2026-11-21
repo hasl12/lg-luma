@@ -33,6 +33,7 @@ mod storage;
 mod text_rendering;
 #[path = "tile-editor.rs"]
 mod tile_editor;
+mod trakt;
 mod update;
 mod vector;
 mod view;
@@ -311,6 +312,28 @@ impl BackButton {
 }
 
 fn launch_app(state: &mut State, webos: bool, id: String, send: impl FnOnce(Request)) {
+    let request = Request::Launch(id.clone());
+    start_launch(state, webos, id, request, send);
+}
+
+fn launch_app_with(
+    state: &mut State,
+    webos: bool,
+    id: String,
+    params: serde_json::Value,
+    send: impl FnOnce(Request),
+) {
+    let request = Request::LaunchWith(id.clone(), params);
+    start_launch(state, webos, id, request, send);
+}
+
+fn start_launch(
+    state: &mut State,
+    webos: bool,
+    id: String,
+    request: Request,
+    send: impl FnOnce(Request),
+) {
     if scroll_preview::is_placeholder(&id) {
         state.notify(state.preferences.language.t("scrollTestOnly"));
         return;
@@ -320,7 +343,7 @@ fn launch_app(state: &mut State, webos: bool, id: String, send: impl FnOnce(Requ
     }
     if webos {
         state.launching = true;
-        send(Request::Launch(id));
+        send(request);
     } else {
         let title = state
             .inventory
@@ -367,6 +390,11 @@ fn effects(
             Effect::Launch(id) => {
                 launch_app(state, platform.webos, id, |request| platform.send(request));
             }
+            Effect::LaunchWith { id, params } => {
+                launch_app_with(state, platform.webos, id, params, |request| {
+                    platform.send(request)
+                });
+            }
             Effect::FireWebhook(tile) => webhook.send(tile),
             Effect::UpdateDownload(release) => updates.request(update::Request::Download(release)),
             Effect::Quit => return false,
@@ -387,6 +415,21 @@ fn effects(
         }
     }
     true
+}
+
+fn trakt_tick(state: &mut State, service: &trakt::Service, visible: bool) {
+    let (changed, notices) = state.trakt.tick(
+        service,
+        &state.preferences,
+        state.page,
+        visible,
+        Instant::now(),
+    );
+    state.dirty |= changed;
+    for key in notices {
+        state.notify(state.preferences.language.t(key));
+    }
+    state.sync_trakt();
 }
 
 fn script(
@@ -778,6 +821,19 @@ fn run() -> Result<(), String> {
             && options.time.is_none()
             && options.frames.is_none()
             && options.screenshot.is_none(),
+    )?;
+    // A preferences file from a build with Trakt credentials keeps its choice, but this
+    // build cannot show the widget, so it must not hold grid cells either.
+    if !trakt::configured() {
+        state.preferences.trakt.enabled = false;
+    }
+    let trakt_service = trakt::Service::new(
+        trakt::token_path(&preferences_path),
+        options.script.is_empty()
+            && options.time.is_none()
+            && options.frames.is_none()
+            && options.screenshot.is_none()
+            && options.test_extra_apps == 0,
     )?;
     let platform = Platform::new(webos);
     let webhook_service = webhook::Service::new();
@@ -1416,6 +1472,7 @@ fn run() -> Result<(), String> {
             visible,
             OffsetDateTime::now_utc().unix_timestamp(),
         );
+        trakt_tick(&mut state, &trakt_service, visible);
         if std::mem::take(&mut state.update_check_requested) {
             if let Some(version) = &options.test_update_version {
                 state.update_response(Ok(
@@ -1992,6 +2049,7 @@ fn run() -> Result<(), String> {
             visible,
             OffsetDateTime::now_utc().unix_timestamp(),
         );
+        trakt_tick(&mut state, &trakt_service, visible);
         // SDL-webOS disables text input when its own panel is dismissed, even
         // if it did not forward a Back/Return key to the application.
         if text_active

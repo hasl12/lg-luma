@@ -161,6 +161,42 @@ and is rejected on TV. `xvfb-run -a pnpm test:markets` checks both widgets, edit
 currency, persistence, delayed timestamps, failures, bounded replies and redirect refusal.
 CI runs this as its own isolated smoke suite. Tests never call public market feeds.
 
+### Trakt continue-watching widget
+
+The widget exists only when the build sets both `LUMA_TRAKT_CLIENT_ID` and
+`LUMA_TRAKT_CLIENT_SECRET` (read with `option_env!` at compile time, for example
+`LUMA_TRAKT_CLIENT_ID=… LUMA_TRAKT_CLIENT_SECRET=… pnpm build`). Never commit these values.
+Without them the widget is not offered in the catalog, a saved `trakt.enabled` is ignored at
+startup, and no Trakt worker starts. Create a Trakt API application with the redirect URI
+`urn:ietf:wg:oauth:2.0:oob` to obtain the pair.
+
+The `trakt` preference holds `enabled` and `position` (default off, a 4×1 band at column 0,
+row 3). Settings → Widgets → Trakt → Configure has one Trakt account row. When disconnected it
+opens a dialog that requests a device code (`POST /oauth/device/code`) and shows the
+`verification_url` as a QR code without the Luma mark, the URL and the `user_code`; the worker
+polls `/oauth/device/token` at Trakt's interval (slower after 429) until success, denial, expiry
+or Close/Back. When connected the row signs out: the worker revokes the token and deletes it.
+
+Tokens are stored separately from preferences in `trakt.json` beside the preferences file,
+written with the same atomic, 0600, owner-preserving `storage::write_atomic`. They are
+renewed with the refresh token a day before expiry, or after a 401; if renewal is rejected the
+file is removed and the widget asks to connect again.
+
+`src/trakt.rs` keeps all HTTP and file I/O on one `trakt` worker thread: fixed
+`https://api.trakt.tv` origin, ureq/rustls, ten-second deadline, no proxy or redirects and a
+1 MiB reply limit. While Home is visible and the widget enabled, it reads `GET /sync/playback`
+every ten minutes (two minutes after a failure); stale replies are dropped by generation after
+sign-out. Up to three most recently paused items with an IMDb ID (or a TMDB ID) are shown as
+cards with the title, `S01E05` or the movie year, and a progress bar. Each card is a remote focus
+target (`Target::TraktItem`): Down from the top bar reaches the weather setup control when shown,
+then the cards, then the dock; Up from the dock returns to the nearest card.
+
+OK launches `space.nuvio.native.legacy` with `{"params": {"url": …}}`, using
+`nuvio-legacy://play/movie/{id}`, `nuvio-legacy://play/series/{id}/{season}/{episode}`, or
+`nuvio-legacy://meta/series/{id}` for season 0 specials. Nuvio Legacy's webOS build does not yet
+route these parameters, so today it opens at its start screen. Scripts, fixed-time captures and
+frame-limited previews start no Trakt worker, and tests never contact Trakt.
+
 `greeting_name` is a locally saved, trimmed, control-free name limited to 40 characters.
 Greeting settings reuse the native/desktop keyboard paths and commit typed replacements on
 Done, Back, keyboard dismissal or a system Home return. An empty edit preserves the old name;

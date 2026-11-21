@@ -382,66 +382,7 @@ fn companion(
     );
     match session {
         Some(Ok(session)) => {
-            let scale = (336. / (session.qr_size + 8) as f32).floor();
-            let size = (session.qr_size + 8) as f32 * scale;
-            let x = (1920. - size) / 2.;
-            let y = 310.;
-            // Invert the normal QR polarity to blend into the dark modal, while
-            // retaining a high-contrast foreground and the full quiet zone.
-            let background = c(COMPANION_BACKGROUND, 1.);
-            let modules = c(0xf5f4ef, 1.);
-            out.shape(Rect::new(x, y, size, size), 0., background);
-            for row in 0..session.qr_size {
-                // Merge contiguous modules so QR rendering stays a few hundred quads.
-                let mut column = 0;
-                while column < session.qr_size {
-                    let mark_start = (session.qr_size - 11) / 2;
-                    let in_mark = (mark_start..mark_start + 11).contains(&row)
-                        && (mark_start..mark_start + 11).contains(&column);
-                    if in_mark {
-                        column += 1;
-                        continue;
-                    }
-                    if !session.qr[(row * session.qr_size + column) as usize] {
-                        column += 1;
-                        continue;
-                    }
-                    let start = column;
-                    while column < session.qr_size {
-                        let in_mark = (mark_start..mark_start + 11).contains(&row)
-                            && (mark_start..mark_start + 11).contains(&column);
-                        if in_mark || !session.qr[(row * session.qr_size + column) as usize] {
-                            break;
-                        }
-                        column += 1;
-                    }
-                    out.shape(
-                        Rect::new(
-                            x + (start + 4) as f32 * scale,
-                            y + (row + 4) as f32 * scale,
-                            (column - start) as f32 * scale,
-                            scale,
-                        ),
-                        0.,
-                        modules,
-                    );
-                }
-            }
-            let mark_start = (session.qr_size - 11) / 2;
-            let mark_plate = Rect::new(
-                x + (mark_start + 4) as f32 * scale,
-                y + (mark_start + 4) as f32 * scale,
-                11. * scale,
-                11. * scale,
-            );
-            out.shape(mark_plate, 1.1 * scale, background);
-            let mark = Rect::new(
-                mark_plate.x + 1.25 * scale,
-                mark_plate.y + 1.25 * scale,
-                8.5 * scale,
-                8.5 * scale,
-            );
-            out.icon(assets, "luma-mark", mark, WHITE);
+            qr_code(out, assets, session.qr_size, &session.qr, 310., 336., true);
             out.text(
                 language.t("wallpaperUploadBrowser"),
                 Rect::new(604., 670., 712., 32.),
@@ -497,6 +438,82 @@ fn companion(
         true,
     );
     out.control(Target::CloseDialog, close, false);
+}
+
+/// An inverted QR code with the full quiet zone and, optionally, the Luma mark in its centre.
+fn qr_code(
+    out: &mut Scene,
+    assets: &Assets,
+    qr_size: i32,
+    qr: &[bool],
+    y: f32,
+    max: f32,
+    mark: bool,
+) {
+    let scale = (max / (qr_size + 8) as f32).floor();
+    let size = (qr_size + 8) as f32 * scale;
+    let x = (1920. - size) / 2.;
+    // Invert the normal QR polarity to blend into the dark modal, while
+    // retaining a high-contrast foreground and the full quiet zone.
+    let background = c(COMPANION_BACKGROUND, 1.);
+    let modules = c(0xf5f4ef, 1.);
+    out.shape(Rect::new(x, y, size, size), 0., background);
+    // Small codes keep every module: the mark would cover too much of their data.
+    let mark_modules = if mark { 11 } else { 0 };
+    for row in 0..qr_size {
+        // Merge contiguous modules so QR rendering stays a few hundred quads.
+        let mut column = 0;
+        while column < qr_size {
+            let mark_start = (qr_size - mark_modules) / 2;
+            let in_mark = (mark_start..mark_start + mark_modules).contains(&row)
+                && (mark_start..mark_start + mark_modules).contains(&column);
+            if in_mark {
+                column += 1;
+                continue;
+            }
+            if !qr[(row * qr_size + column) as usize] {
+                column += 1;
+                continue;
+            }
+            let start = column;
+            while column < qr_size {
+                let in_mark = (mark_start..mark_start + mark_modules).contains(&row)
+                    && (mark_start..mark_start + mark_modules).contains(&column);
+                if in_mark || !qr[(row * qr_size + column) as usize] {
+                    break;
+                }
+                column += 1;
+            }
+            out.shape(
+                Rect::new(
+                    x + (start + 4) as f32 * scale,
+                    y + (row + 4) as f32 * scale,
+                    (column - start) as f32 * scale,
+                    scale,
+                ),
+                0.,
+                modules,
+            );
+        }
+    }
+    if !mark {
+        return;
+    }
+    let mark_start = (qr_size - 11) / 2;
+    let mark_plate = Rect::new(
+        x + (mark_start + 4) as f32 * scale,
+        y + (mark_start + 4) as f32 * scale,
+        11. * scale,
+        11. * scale,
+    );
+    out.shape(mark_plate, 1.1 * scale, background);
+    let mark = Rect::new(
+        mark_plate.x + 1.25 * scale,
+        mark_plate.y + 1.25 * scale,
+        8.5 * scale,
+        8.5 * scale,
+    );
+    out.icon(assets, "luma-mark", mark, WHITE);
 }
 
 fn c(rgb: u32, alpha: f32) -> Color {
@@ -615,7 +632,8 @@ pub fn scene(state: &State, assets: &Assets, now: OffsetDateTime) -> Scene {
         | Overlay::WidgetCatalog { .. }
         | Overlay::Keyboard
         | Overlay::WallpaperUpload
-        | Overlay::TileEditor),
+        | Overlay::TileEditor
+        | Overlay::TraktLogin),
     ) = &state.overlay
     {
         let anchor = match overlay {
@@ -655,6 +673,7 @@ pub fn scene(state: &State, assets: &Assets, now: OffsetDateTime) -> Scene {
             Overlay::Keyboard => keyboard(&mut out, state, assets),
             Overlay::WallpaperUpload => wallpaper_upload(&mut out, state, assets),
             Overlay::TileEditor => tile_editor(&mut out, state, assets),
+            Overlay::TraktLogin => trakt_login(&mut out, state, assets),
             Overlay::SystemKeyboard
             | Overlay::Recents { .. }
             | Overlay::Inputs
@@ -1315,6 +1334,12 @@ fn home_widgets(out: &mut Scene, state: &State, assets: &Assets, now: OffsetDate
             market_widget(out, state, assets, widget, cell);
             continue;
         }
+        if widget == HomeWidget::Trakt {
+            if state.trakt.available {
+                trakt_widget(out, state, assets, cell);
+            }
+            continue;
+        }
         if widget.kind() == HomeWidget::Weather {
             let config = state.preferences.weather_settings(widget);
             if config.small
@@ -1538,6 +1563,235 @@ fn market_widget(out: &mut Scene, state: &State, assets: &Assets, kind: HomeWidg
         c(0xf5f5f5, 0.78),
         false,
     );
+}
+
+/// Up to three continue-watching cards in a 4×1 band, each a remote focus target.
+fn trakt_widget(out: &mut Scene, state: &State, assets: &Assets, cell: Rect) {
+    let language = state.preferences.language;
+    let trakt = &state.trakt;
+    let cards = state.trakt_cards();
+    if cards == 0 {
+        let message = match trakt.connected {
+            Some(false) => "traktConnectHint",
+            Some(true) if trakt.loaded && !trakt.failed => "traktEmpty",
+            Some(true) if trakt.failed => "traktUnavailable",
+            _ => "traktLoading",
+        };
+        out.glass(cell, 20.);
+        out.border(cell, 20., 1., c(0xffffff, 0.07));
+        let (title, style) = assets.fit_line(
+            language.t("traktContinueWatching"),
+            text(24., 600, -0.02),
+            cell.w - 48.,
+            16.,
+        );
+        out.text(
+            title,
+            Rect::new(cell.x + 24., cell.y + 30., cell.w - 48., 30.),
+            style,
+            WHITE,
+            false,
+        );
+        let (label, style) =
+            assets.fit_line(language.t(message), text(18., 450, 0.), cell.w - 48., 12.);
+        out.text(
+            label,
+            Rect::new(cell.x + 24., cell.y + 72., cell.w - 48., 26.),
+            style,
+            c(0xf5f5f5, 0.72),
+            false,
+        );
+        return;
+    }
+    let gap = 24.;
+    let width = (cell.w - gap * (MAX_TRAKT_CARDS - 1.)) / MAX_TRAKT_CARDS;
+    for (index, item) in trakt.items.iter().take(cards).enumerate() {
+        let rect = Rect::new(cell.x + index as f32 * (width + gap), cell.y, width, cell.h);
+        let focused = state.focus == Target::TraktItem(index) && !state.pointer;
+        let hovered = state.hover == Some(Target::TraktItem(index));
+        if focused || hovered {
+            out.draw.push(Draw::Glass(rect, 20., c(0xe5ebf0, 1.)));
+            out.border(rect, 20., 1.5, c(0xffffff, 0.7));
+        } else {
+            out.glass(rect, 20.);
+            out.border(rect, 20., 1., c(0xffffff, 0.07));
+        }
+        let (primary, secondary, track) = if focused || hovered {
+            (c(0x2c2c2c, 1.), c(0x2c2c2c, 0.7), c(0x2c2c2c, 0.18))
+        } else {
+            (WHITE, c(0xf5f5f5, 0.72), c(0xffffff, 0.18))
+        };
+        let inner = rect.w - 48.;
+        let (title, style) = assets.fit_line(&item.title, text(24., 600, -0.02), inner, 16.);
+        out.text(
+            title,
+            Rect::new(rect.x + 24., rect.y + 20., inner, 30.),
+            style,
+            primary,
+            false,
+        );
+        let detail = item.detail(language);
+        let (detail, style) = assets.fit_line(&detail, text(18., 500, 0.), inner, 12.);
+        out.text(
+            detail,
+            Rect::new(rect.x + 24., rect.y + 56., inner, 24.),
+            style,
+            secondary,
+            false,
+        );
+        let bar = Rect::new(rect.x + 24., rect.y + rect.h - 30., inner, 6.);
+        out.shape(bar, 3., track);
+        let filled = (bar.w * item.progress / 100.).max(6.);
+        out.shape(Rect::new(bar.x, bar.y, filled, bar.h), 3., primary);
+        out.control(Target::TraktItem(index), rect, false);
+    }
+}
+
+const MAX_TRAKT_CARDS: f32 = crate::trakt::MAX_ITEMS as f32;
+
+fn trakt_settings(out: &mut Scene, state: &State, assets: &Assets) {
+    let language = state.preferences.language;
+    let connected = state.trakt.connected == Some(true);
+    row(
+        out,
+        state,
+        assets,
+        Row {
+            target: Target::TraktAccount,
+            rect: Rect::new(640., 164.8 - state.scroll, 1120., 104.),
+            title: language.t("traktAccount"),
+            icon: Some("settings"),
+            value: Some(language.t(if connected {
+                "traktStatusConnected"
+            } else {
+                "traktStatusDisconnected"
+            })),
+            description: Some(language.t(if connected {
+                "traktDisconnectHelp"
+            } else {
+                "traktConnectHelp"
+            })),
+            selected: false,
+            chevron: !connected,
+        },
+    );
+    let top = 292.8 - state.scroll;
+    let style = text(18., 400, 0.).leading(1.45);
+    let notes = [
+        ("refresh", language.t("traktNuvioHelp")),
+        ("settings", language.t("traktPrivate")),
+    ];
+    let heights = notes.map(|(_, label)| {
+        assets.lines(label, style, 1000.) as f32 * style.size * style.line_height
+    });
+    let panel = Rect::new(640., top, 1120., 96. + heights.iter().sum::<f32>() + 16.);
+    out.glass(panel, 20.);
+    out.border(panel, 20., 1., c(0xffffff, 0.07));
+    out.text(
+        language.t("traktContinueWatching"),
+        Rect::new(664., top + 24., 1072., 28.),
+        text(20., 550, -0.02),
+        WHITE,
+        false,
+    );
+    let mut y = top + 72.;
+    for ((icon, label), height) in notes.into_iter().zip(heights) {
+        out.icon(
+            assets,
+            icon,
+            Rect::new(664., y + 3., 20., 20.),
+            c(0xffffff, 0.55),
+        );
+        out.text(
+            label,
+            Rect::new(700., y, 1000., height),
+            style,
+            c(0xf5f5f5, 0.72),
+            false,
+        );
+        y += height + 16.;
+    }
+}
+
+/// Device-code sign-in: the activation address as a QR code and the code to type there.
+fn trakt_login(out: &mut Scene, state: &State, assets: &Assets) {
+    use crate::trakt::Login;
+    let language = state.preferences.language;
+    let panel = Rect::new(520., 144., 880., 816.);
+    out.modal = Some(panel);
+    out.shadow(panel, 24., 40., 12., 0.3);
+    out.shape(panel, 24., c(COMPANION_BACKGROUND, 1.));
+    out.text(
+        language.t("traktLoginTitle"),
+        Rect::new(584., 198., 752., 48.),
+        text(32., 550, -0.02),
+        WHITE,
+        true,
+    );
+    match &state.trakt.login {
+        Login::Code(code) => {
+            out.text(
+                language.t("traktLoginHint"),
+                Rect::new(604., 262., 712., 58.),
+                text(19., 400, 0.).leading(1.5),
+                c(0xffffff, 0.65),
+                true,
+            );
+            qr_code(out, assets, code.qr_size, &code.qr, 336., 264., false);
+            out.text(
+                &code.url,
+                Rect::new(568., 616., 784., 36.),
+                assets.fit_text(&code.url, text(26., 600, 0.), 784.),
+                WHITE,
+                true,
+            );
+            let style = assets.fit_text(&code.user_code, text(56., 650, 0.12).leading(1.1), 784.);
+            out.text(
+                &code.user_code,
+                Rect::new(568., 668., 784., style.size * style.line_height),
+                style,
+                WHITE,
+                true,
+            );
+            out.text(
+                language.t("traktLoginWaiting"),
+                Rect::new(604., 762., 712., 28.),
+                text(18., 450, 0.),
+                c(0xffffff, 0.75),
+                true,
+            );
+            out.text(
+                language.t("traktPrivate"),
+                Rect::new(604., 806., 712., 22.),
+                text(15., 400, 0.),
+                c(0xffffff, 0.5),
+                true,
+            );
+        }
+        login => {
+            let key = match login {
+                Login::Failed(key) => key,
+                _ => "traktLoginStarting",
+            };
+            out.text(
+                language.t(key),
+                Rect::new(604., 470., 712., 90.),
+                text(22., 450, 0.).leading(1.5),
+                c(0xffffff, 0.75),
+                true,
+            );
+        }
+    }
+    let close = Rect::new(812., 862., 296., 56.);
+    out.pill(close, state.focus == Target::CloseDialog, false);
+    out.text(
+        language.t("close"),
+        Rect::new(close.x, close.y + 15., close.w, 28.),
+        text(20., 550, 0.),
+        c(0x171c20, 1.),
+        true,
+    );
+    out.control(Target::CloseDialog, close, false);
 }
 
 fn favorites_dock(out: &mut Scene, state: &State, assets: &Assets) {
@@ -2900,6 +3154,7 @@ fn settings_sidebar(out: &mut Scene, state: &State, assets: &Assets) {
             };
             let sub = match &state.subpage {
                 Some(Subpage::Market(kind)) => language.t(kind.key()),
+                Some(Subpage::Trakt) => language.t("trakt"),
                 Some(Subpage::Greeting) => language.t("greeting"),
                 Some(Subpage::Weather) => language.t("weather"),
                 Some(Subpage::Shortcuts) => language.t("shortcuts"),
@@ -2988,6 +3243,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             subpage,
             Subpage::WeatherLocation
                 | Subpage::Market(_)
+                | Subpage::Trakt
                 | Subpage::Weather
                 | Subpage::WeatherStyle
                 | Subpage::WeatherIcons
@@ -3000,6 +3256,7 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
         ) {
             match subpage {
                 Subpage::Market(kind) => market_settings(out, state, assets, *kind),
+                Subpage::Trakt => trakt_settings(out, state, assets),
                 Subpage::WeatherLocation => location_settings(out, state, assets),
                 Subpage::Weather => weather_settings(out, state, assets),
                 Subpage::WeatherStyle => weather_style_settings(out, state, assets),
@@ -3154,7 +3411,8 @@ fn settings_content(out: &mut Scene, state: &State, assets: &Assets) {
             | Subpage::Greeting
             | Subpage::Clock
             | Subpage::AppDrawer
-            | Subpage::Market(_) => {
+            | Subpage::Market(_)
+            | Subpage::Trakt => {
                 unreachable!()
             }
             Subpage::WidgetPosition(_) => unreachable!(),
@@ -5516,7 +5774,7 @@ mod tests {
                 assert_eq!(
                     rect.w,
                     match widget {
-                        HomeWidget::Greeting => 1160.,
+                        HomeWidget::Greeting | HomeWidget::Trakt => 1160.,
                         HomeWidget::Weather => 568.,
                         _ => 272.,
                     }

@@ -39,6 +39,9 @@ mod settings_contrast_tests;
 #[path = "attributions-tests.rs"]
 mod attributions_tests;
 
+#[path = "trakt-ui-tests.rs"]
+mod trakt_ui_tests;
+
 fn ready() -> State {
     let mut state = State::new(Preferences::default());
     state.set_inventory(demo_inventory(), None);

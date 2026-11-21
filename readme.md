@@ -33,6 +33,8 @@ https://github.com/user-attachments/assets/cae57643-f6b4-47b5-ad7d-0483b32eeb2d
 - Customizable app drawer with optional names beneath selected non-favorite apps (off by default), input icons and recent app switching.
 - Left/right navigation wraps between the first and last app in favorites and the app drawer.
 - Movable greeting, weather, stock and crypto widgets.
+- Optional Trakt “continue watching” widget (in builds with Trakt API credentials): sign in with
+  a QR code and device code, then open up to three movies or episodes in Nuvio Legacy.
 - Choose Kuankuan (default), Breezy, Lucide or Kickstand weather artwork, toggle icons on/off, and optionally hide the location name. Layout previews follow these settings.
 - Offline credits in System → Attributions, with remote and mouse-wheel scrolling.
 - Midnight background and custom uploads, with optional rotation.

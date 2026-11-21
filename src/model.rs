@@ -357,6 +357,7 @@ pub enum HomeWidget {
     Greeting,
     Crypto,
     Stocks,
+    Trakt,
     ExtraWeather(u8),
     ExtraCrypto(u8),
     ExtraStocks(u8),
@@ -372,11 +373,17 @@ impl HomeWidget {
         }
     }
 
-    pub const ALL: [Self; 4] = [Self::Greeting, Self::Weather, Self::Crypto, Self::Stocks];
+    pub const ALL: [Self; 5] = [
+        Self::Greeting,
+        Self::Weather,
+        Self::Crypto,
+        Self::Stocks,
+        Self::Trakt,
+    ];
 
     pub fn span(self) -> (u8, u8) {
         match self.kind() {
-            Self::Greeting => (4, 1),
+            Self::Greeting | Self::Trakt => (4, 1),
             Self::Weather => (2, 2),
             Self::Crypto | Self::Stocks => (1, 1),
             _ => unreachable!(),
@@ -389,6 +396,7 @@ impl HomeWidget {
             Self::Greeting => "greeting",
             Self::Crypto => "crypto",
             Self::Stocks => "stocks",
+            Self::Trakt => "trakt",
             _ => unreachable!(),
         }
     }
@@ -400,11 +408,13 @@ impl HomeWidget {
                 Self::Weather => 0,
                 Self::Crypto => 0,
                 Self::Stocks => 1,
+                Self::Trakt => 0,
                 _ => unreachable!(),
             },
             row: match self.kind() {
                 Self::Weather => 1,
                 Self::Crypto | Self::Stocks => 2,
+                Self::Trakt => 3,
                 _ => 0,
             },
         }
@@ -495,6 +505,8 @@ pub struct Preferences {
     pub crypto: crate::markets::Settings,
     #[serde(deserialize_with = "crate::markets::deserialize_settings")]
     pub stocks: crate::markets::Settings,
+    #[serde(deserialize_with = "crate::trakt::deserialize_settings")]
+    pub trakt: crate::trakt::Settings,
     pub weather_small: bool,
     pub weather_show_location: bool,
     pub weather_show_icon: bool,
@@ -558,6 +570,7 @@ impl Default for Preferences {
                 position: HomeWidget::Stocks.default_position(),
                 ..Default::default()
             },
+            trakt: crate::trakt::Settings::default(),
             weather_small: false,
             weather_show_location: true,
             weather_show_icon: true,
@@ -648,6 +661,10 @@ impl Preferences {
     }
 
     pub fn available_widget(&self, kind: HomeWidget) -> Option<HomeWidget> {
+        // Trakt needs build-time API credentials and exists only once.
+        if kind == HomeWidget::Trakt {
+            return (crate::trakt::configured() && !self.has_widget(kind)).then_some(kind);
+        }
         self.widgets()
             .into_iter()
             .find(|widget| widget.kind() == kind && !self.has_widget(*widget))
@@ -760,6 +777,7 @@ impl Preferences {
             HomeWidget::Weather => self.weather_position,
             HomeWidget::Crypto => self.crypto.position,
             HomeWidget::Stocks => self.stocks.position,
+            HomeWidget::Trakt => self.trakt.position,
             HomeWidget::ExtraWeather(i) => self.extra_weather[usize::from(i)].position,
             HomeWidget::ExtraCrypto(i) => self.extra_crypto[usize::from(i)].position,
             HomeWidget::ExtraStocks(i) => self.extra_stocks[usize::from(i)].position,
@@ -772,6 +790,7 @@ impl Preferences {
             HomeWidget::Weather => self.show_weather,
             HomeWidget::Crypto => self.crypto.enabled,
             HomeWidget::Stocks => self.stocks.enabled,
+            HomeWidget::Trakt => self.trakt.enabled,
             HomeWidget::ExtraWeather(i) => self
                 .extra_weather
                 .get(usize::from(i))
@@ -810,6 +829,7 @@ impl Preferences {
             HomeWidget::Weather => self.show_weather = present,
             HomeWidget::Crypto => self.crypto.enabled = present,
             HomeWidget::Stocks => self.stocks.enabled = present,
+            HomeWidget::Trakt => self.trakt.enabled = present,
             HomeWidget::ExtraWeather(i) => self.extra_weather[usize::from(i)].enabled = present,
             HomeWidget::ExtraCrypto(i) => self.extra_crypto[usize::from(i)].enabled = present,
             HomeWidget::ExtraStocks(i) => self.extra_stocks[usize::from(i)].enabled = present,
@@ -857,6 +877,7 @@ impl Preferences {
             HomeWidget::Weather => self.weather_position = position,
             HomeWidget::Crypto => self.crypto.position = position,
             HomeWidget::Stocks => self.stocks.position = position,
+            HomeWidget::Trakt => self.trakt.position = position,
             HomeWidget::ExtraWeather(i) => self.extra_weather[usize::from(i)].position = position,
             HomeWidget::ExtraCrypto(i) => self.extra_crypto[usize::from(i)].position = position,
             HomeWidget::ExtraStocks(i) => self.extra_stocks[usize::from(i)].position = position,
