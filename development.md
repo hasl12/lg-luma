@@ -187,7 +187,12 @@ file is removed and the widget asks to connect again.
 1 MiB reply limit. While Home is visible and the widget enabled, it reads `GET /sync/playback`
 every ten minutes (two minutes after a failure); stale replies are dropped by generation after
 sign-out. Up to three most recently paused items with an IMDb ID (or a TMDB ID) are shown as
-cards with the title, `S01E05` or the movie year, and a progress bar. Each card is a remote focus
+cards with the title, `S01E05` or the movie year, and a progress bar. For languages other
+than English, the worker replaces each movie or show title with Trakt's translation
+(`GET /movies|shows/{trakt id}/translations/{language}`, preferring the UI language's country,
+such as `br` for Portuguese or `tw` for Traditional Chinese). Translations and missing ones are
+cached in memory per item and language; failures keep the original title, and changing the UI
+language fetches the titles again. Each card is a remote focus
 target (`Target::TraktItem`): Down from the top bar reaches the weather setup control when shown,
 then the cards, then the dock; Up from the dock returns to the nearest card.
 

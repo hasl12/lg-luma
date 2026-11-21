@@ -8,6 +8,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     io::Read,
     path::{Path, PathBuf},
     sync::mpsc,
@@ -140,9 +141,29 @@ fn clean_title(value: &Value) -> Option<String> {
     (!title.is_empty()).then(|| title.into())
 }
 
+/// A playback card and the Trakt ID used to look up its translated title.
+struct Entry {
+    item: Item,
+    lookup: Option<(&'static str, u64)>,
+}
+
+fn trakt_id(ids: &Value) -> Option<u64> {
+    ids["trakt"].as_u64().filter(|id| *id > 0)
+}
+
 /// Most recently paused first, at most [`MAX_ITEMS`], ignoring entries Nuvio cannot open.
+#[cfg(test)]
 pub fn parse_playback(value: &Value) -> Option<Vec<Item>> {
-    let mut entries: Vec<(&str, Item)> = value
+    Some(
+        parse_entries(value)?
+            .into_iter()
+            .map(|entry| entry.item)
+            .collect(),
+    )
+}
+
+fn parse_entries(value: &Value) -> Option<Vec<Entry>> {
+    let mut entries: Vec<(&str, Entry)> = value
         .as_array()?
         .iter()
         .filter_map(|entry| {
@@ -150,7 +171,7 @@ pub fn parse_playback(value: &Value) -> Option<Vec<Item>> {
             if !progress.is_finite() {
                 return None;
             }
-            let (title, kind, id) = match entry["type"].as_str()? {
+            let (title, kind, id, lookup) = match entry["type"].as_str()? {
                 "movie" => {
                     let movie = &entry["movie"];
                     (
@@ -161,6 +182,7 @@ pub fn parse_playback(value: &Value) -> Option<Vec<Item>> {
                                 .and_then(|year| u16::try_from(year).ok()),
                         },
                         media_id(&movie["ids"])?,
+                        trakt_id(&movie["ids"]).map(|id| ("movies", id)),
                     )
                 }
                 "episode" => {
@@ -173,17 +195,21 @@ pub fn parse_playback(value: &Value) -> Option<Vec<Item>> {
                             number: u16::try_from(episode["number"].as_u64()?).ok()?,
                         },
                         media_id(&show["ids"])?,
+                        trakt_id(&show["ids"]).map(|id| ("shows", id)),
                     )
                 }
                 _ => return None,
             };
             Some((
                 entry["paused_at"].as_str().unwrap_or(""),
-                Item {
-                    title,
-                    kind,
-                    progress: progress.clamp(0., 100.) as f32,
-                    id,
+                Entry {
+                    item: Item {
+                        title,
+                        kind,
+                        progress: progress.clamp(0., 100.) as f32,
+                        id,
+                    },
+                    lookup,
                 },
             ))
         })
@@ -193,10 +219,45 @@ pub fn parse_playback(value: &Value) -> Option<Vec<Item>> {
     Some(
         entries
             .into_iter()
-            .map(|(_, item)| item)
+            .map(|(_, entry)| entry)
             .take(MAX_ITEMS)
             .collect(),
     )
+}
+
+/// Trakt's two-letter language and the country whose translation fits this UI language.
+/// English keeps Trakt's own titles.
+fn translation_locale(language: Language) -> Option<(&'static str, &'static str)> {
+    Some(match language {
+        Language::En => return None,
+        Language::De => ("de", "de"),
+        Language::Zh => ("zh", "cn"),
+        Language::ZhTw => ("zh", "tw"),
+        Language::Es => ("es", "es"),
+        Language::Pt => ("pt", "br"),
+        Language::It => ("it", "it"),
+        Language::Ru => ("ru", "ru"),
+        Language::Pl => ("pl", "pl"),
+        Language::Fr => ("fr", "fr"),
+        Language::Vi => ("vi", "vn"),
+        Language::Nl => ("nl", "nl"),
+        Language::Sv => ("sv", "se"),
+        Language::Cs => ("cs", "cz"),
+        Language::Ca => ("ca", "es"),
+        Language::Hu => ("hu", "hu"),
+    })
+}
+
+/// The translated title for `country`, otherwise the first translation with a title.
+fn pick_translation(value: &Value, country: &str) -> Option<String> {
+    let translations = value.as_array()?;
+    let titled = |entry: &&Value| clean_title(&entry["title"]).is_some();
+    translations
+        .iter()
+        .filter(titled)
+        .find(|entry| entry["country"].as_str() == Some(country))
+        .or_else(|| translations.iter().find(titled))
+        .and_then(|entry| clean_title(&entry["title"]))
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -306,7 +367,7 @@ pub enum Command {
     Login,
     CancelLogin,
     Logout,
-    Playback(u64),
+    Playback(u64, Language),
 }
 
 #[derive(Debug)]
@@ -396,6 +457,8 @@ impl Worker {
             return;
         }
         let mut device: Option<Device> = None;
+        // Translated titles by (kind, Trakt ID, language); `None` remembers a missing one.
+        let mut titles: HashMap<(&'static str, u64, &'static str), Option<String>> = HashMap::new();
         loop {
             let command = match &device {
                 Some(device) => {
@@ -439,8 +502,10 @@ impl Worker {
                     let _ = std::fs::remove_file(&self.path);
                     Some(Reply::Account(false))
                 }
-                Some(Command::Playback(generation)) => {
-                    let result = self.playback(&mut token);
+                Some(Command::Playback(generation, language)) => {
+                    let result = self
+                        .playback(&mut token)
+                        .map(|entries| self.translate(entries, language, &mut titles));
                     if token.is_none() {
                         let _ = self.results.send(Reply::Account(false));
                     }
@@ -621,7 +686,53 @@ impl Worker {
     }
 
     /// Clears `token` only when Trakt rejects both the access and the refresh token.
-    fn playback(&self, token: &mut Option<Token>) -> Result<Vec<Item>, ()> {
+    /// Replaces titles with translations where Trakt has one; failures keep the original.
+    fn translate(
+        &self,
+        entries: Vec<Entry>,
+        language: Language,
+        titles: &mut HashMap<(&'static str, u64, &'static str), Option<String>>,
+    ) -> Vec<Item> {
+        let Some((code, country)) = translation_locale(language) else {
+            return entries.into_iter().map(|entry| entry.item).collect();
+        };
+        if titles.len() > 256 {
+            titles.clear();
+        }
+        entries
+            .into_iter()
+            .map(|Entry { mut item, lookup }| {
+                if let Some((kind, id)) = lookup {
+                    let title = match titles.get(&(kind, id, code)) {
+                        Some(title) => title.clone(),
+                        None => match self.request(
+                            &format!("/{kind}/{id}/translations/{code}"),
+                            None,
+                            None,
+                        ) {
+                            // Only a definite answer is cached; transport failures retry later.
+                            Some((200, value)) => {
+                                let title = pick_translation(&value, country);
+                                titles.insert((kind, id, code), title.clone());
+                                title
+                            }
+                            Some((404, _)) => {
+                                titles.insert((kind, id, code), None);
+                                None
+                            }
+                            _ => None,
+                        },
+                    };
+                    if let Some(title) = title {
+                        item.title = title;
+                    }
+                }
+                item
+            })
+            .collect()
+    }
+
+    fn playback(&self, token: &mut Option<Token>) -> Result<Vec<Entry>, ()> {
         let current = token.clone().ok_or(())?;
         let current = if current.expires_at - unix_now() < RENEW_BEFORE {
             match self.renew(&current) {
@@ -654,7 +765,7 @@ impl Worker {
         if status != 200 {
             return Err(());
         }
-        parse_playback(&value).ok_or(())
+        parse_entries(&value).ok_or(())
     }
 }
 
@@ -678,6 +789,8 @@ pub struct Trakt {
     generation: u64,
     pending: bool,
     next: Option<Instant>,
+    /// The language of the shown titles; a change fetches them again.
+    language: Option<Language>,
 }
 
 impl Default for Trakt {
@@ -693,6 +806,7 @@ impl Default for Trakt {
             generation: 0,
             pending: false,
             next: None,
+            language: None,
         }
     }
 }
@@ -703,7 +817,7 @@ impl Trakt {
             Command::Login => self.login = Login::Requesting,
             Command::CancelLogin => self.login = Login::Idle,
             Command::Logout => self.disconnect(),
-            Command::Playback(_) => {}
+            Command::Playback(..) => {}
         }
         self.commands.push(command);
     }
@@ -788,6 +902,12 @@ impl Trakt {
                 }
             }
         }
+        if self
+            .language
+            .is_some_and(|language| language != preferences.language)
+        {
+            self.next = None;
+        }
         if self.available
             && self.connected == Some(true)
             && visible
@@ -796,9 +916,12 @@ impl Trakt {
             && !self.pending
             && self.next.is_none_or(|next| now >= next)
             && let Some(sender) = &service.sender
-            && sender.try_send(Command::Playback(self.generation)).is_ok()
+            && sender
+                .try_send(Command::Playback(self.generation, preferences.language))
+                .is_ok()
         {
             self.pending = true;
+            self.language = Some(preferences.language);
         }
         (changed, notices)
     }
@@ -934,6 +1057,75 @@ mod tests {
     }
 
     #[test]
+    fn translations_prefer_the_ui_country_and_fall_back_to_any_title() {
+        let value = json!([
+            {"title": "Harry Potter e a Pedra Filosofal", "language": "pt", "country": "pt"},
+            {"title": "Harry Potter e a Pedra Filosofal (BR)", "language": "pt", "country": "br"},
+        ]);
+        assert_eq!(
+            pick_translation(&value, "br").as_deref(),
+            Some("Harry Potter e a Pedra Filosofal (BR)")
+        );
+        assert_eq!(
+            pick_translation(&value, "xx").as_deref(),
+            Some("Harry Potter e a Pedra Filosofal")
+        );
+        let untitled = json!([
+            {"title": null, "country": "cz"},
+            {"title": " ", "country": "cz"},
+            {"title": "Kámen mudrců", "country": "sk"},
+        ]);
+        assert_eq!(
+            pick_translation(&untitled, "cz").as_deref(),
+            Some("Kámen mudrců")
+        );
+        assert!(pick_translation(&json!([]), "cz").is_none());
+        assert!(translation_locale(Language::En).is_none());
+        assert_eq!(translation_locale(Language::ZhTw), Some(("zh", "tw")));
+        for language in Language::ALL {
+            if let Some((code, country)) = translation_locale(language) {
+                assert_eq!((code.len(), country.len()), (2, 2));
+            }
+        }
+    }
+
+    #[test]
+    fn entries_keep_the_trakt_id_for_translation_lookups() {
+        let mut value = movie("Film", Some("tt1"), None, "");
+        value["movie"]["ids"]["trakt"] = json!(42);
+        let entries = parse_entries(&json!([value])).unwrap();
+        assert_eq!(entries[0].lookup, Some(("movies", 42)));
+        let entries = parse_entries(&json!([movie("Film", Some("tt1"), None, "")])).unwrap();
+        assert_eq!(entries[0].lookup, None);
+    }
+
+    #[test]
+    fn changing_the_language_fetches_titles_again() {
+        let (service, jobs, results) = service();
+        let mut preferences = Preferences::default();
+        preferences.trakt.enabled = true;
+        let mut trakt = Trakt {
+            available: true,
+            connected: Some(true),
+            ..Trakt::default()
+        };
+        let now = Instant::now();
+        trakt.tick(&service, &preferences, Page::Home, true, now);
+        assert_eq!(jobs.try_recv().unwrap(), Command::Playback(0, Language::En));
+        results
+            .send(Reply::Playback {
+                generation: 0,
+                result: Ok(vec![]),
+            })
+            .unwrap();
+        trakt.tick(&service, &preferences, Page::Home, true, now);
+        assert!(jobs.try_recv().is_err());
+        preferences.language = Language::Cs;
+        trakt.tick(&service, &preferences, Page::Home, true, now);
+        assert_eq!(jobs.try_recv().unwrap(), Command::Playback(0, Language::Cs));
+    }
+
+    #[test]
     fn public_clients_send_no_client_secret() {
         let body = json!({"code": "c", "client_id": "id"});
         assert_eq!(with_secret(body.clone(), None), body);
@@ -987,7 +1179,7 @@ mod tests {
         trakt.tick(&service, &preferences, Page::Home, false, now);
         assert!(jobs.try_recv().is_err());
         trakt.tick(&service, &preferences, Page::Home, true, now);
-        assert_eq!(jobs.try_recv().unwrap(), Command::Playback(0));
+        assert_eq!(jobs.try_recv().unwrap(), Command::Playback(0, Language::En));
         trakt.tick(&service, &preferences, Page::Home, true, now);
         assert!(jobs.try_recv().is_err(), "One request at a time");
         let item = Item {
@@ -1006,7 +1198,7 @@ mod tests {
         assert_eq!(trakt.items, std::slice::from_ref(&item));
         assert!(jobs.try_recv().is_err(), "Refreshes are throttled");
         trakt.tick(&service, &preferences, Page::Home, true, now + REFRESH);
-        assert_eq!(jobs.try_recv().unwrap(), Command::Playback(0));
+        assert_eq!(jobs.try_recv().unwrap(), Command::Playback(0, Language::En));
         trakt.send(Command::Logout);
         results
             .send(Reply::Playback {
