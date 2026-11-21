@@ -187,6 +187,9 @@ jobs:
         run: pnpm sdk
       - name: Cross-build and verify the native IPK and Homebrew feed
         id: package
+        env:
+          # Fork-only: the Trakt widget is compiled in only when this repository variable is set.
+          LUMA_TRAKT_CLIENT_ID: ${{ vars.LUMA_TRAKT_CLIENT_ID }}
         run: |
           export WEBOS_NDK="$GITHUB_WORKSPACE/.build/toolchain/arm-webos-linux-gnueabi_sdk-buildroot"
           pnpm build
