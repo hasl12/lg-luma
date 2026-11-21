@@ -1,5 +1,11 @@
 # lg-luma
 
+## 3.13.0
+
+### Minor Changes
+
+- b1a6e32: Add an optional Trakt “continue watching” Home widget for builds with Trakt API credentials. Sign in from Settings → Widgets with a QR code and device code; up to three in-progress movies or episodes appear as focusable cards with progress bars and open Nuvio Legacy.
+
 ## 3.12.1
 
 ### Patch Changes
