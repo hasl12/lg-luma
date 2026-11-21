@@ -47,17 +47,18 @@ the final wallpapers, prepared offline for Liquid Glass and covered by the same 
 
 ## Brand SVGs
 
-| Asset             | Source                                                                                                | License / attribution                                                                  |
-| ----------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `apple-tv.svg`    | [Apple TV](https://commons.wikimedia.org/wiki/File:Apple_TV_logo.svg)                                 | Apple Inc.; public-domain logo artwork                                                 |
-| `prime-video.svg` | [Prime Video](https://commons.wikimedia.org/wiki/File:Amazon_Prime_Video_logo.svg)                    | Amazon; public-domain logo artwork                                                     |
-| `disney-plus.svg` | [Disney+](https://commons.wikimedia.org/wiki/File:Disney%2B_logo.svg)                                 | Disney Enterprises; public-domain logo artwork                                         |
-| `jellyfin.svg`    | [Jellyfin branding](https://github.com/jellyfin/jellyfin-ux/blob/master/branding/SVG/banner-dark.svg) | Jellyfin contributors; [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
-| `netflix.svg`     | [Netflix](https://commons.wikimedia.org/wiki/File:Netflix_2015_logo.svg)                              | Netflix Inc.; public-domain logo artwork                                               |
-| `youtube.svg`     | [YouTube](https://commons.wikimedia.org/wiki/File:YouTube_2024.svg)                                   | Google Inc.; public-domain logo artwork                                                |
-| `arte.svg`        | [ARTE](https://commons.wikimedia.org/wiki/File:Arte_Logo_2026.svg)                                    | ARTE; public-domain logo artwork                                                       |
-| `zdf.svg`         | [ZDF](https://commons.wikimedia.org/wiki/File:ZDF_logo.svg)                                           | ZDF; public-domain logo artwork                                                        |
-| `das-erste.svg`   | [Das Erste](https://commons.wikimedia.org/wiki/File:Das_Erste_2014.svg)                               | ARD; public-domain logo artwork                                                        |
+| Asset              | Source                                                                                                        | License / attribution                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `apple-tv.svg`     | [Apple TV](https://commons.wikimedia.org/wiki/File:Apple_TV_logo.svg)                                         | Apple Inc.; public-domain logo artwork                                                 |
+| `prime-video.svg`  | [Prime Video](https://commons.wikimedia.org/wiki/File:Amazon_Prime_Video_logo.svg)                            | Amazon; public-domain logo artwork                                                     |
+| `disney-plus.svg`  | [Disney+](https://commons.wikimedia.org/wiki/File:Disney%2B_logo.svg)                                         | Disney Enterprises; public-domain logo artwork                                         |
+| `jellyfin.svg`     | [Jellyfin branding](https://github.com/jellyfin/jellyfin-ux/blob/master/branding/SVG/banner-dark.svg)         | Jellyfin contributors; [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
+| `netflix.svg`      | [Netflix](https://commons.wikimedia.org/wiki/File:Netflix_2015_logo.svg)                                      | Netflix Inc.; public-domain logo artwork                                               |
+| `youtube.svg`      | [YouTube](https://commons.wikimedia.org/wiki/File:YouTube_2024.svg)                                           | Google Inc.; public-domain logo artwork                                                |
+| `arte.svg`         | [ARTE](https://commons.wikimedia.org/wiki/File:Arte_Logo_2026.svg)                                            | ARTE; public-domain logo artwork                                                       |
+| `zdf.svg`          | [ZDF](https://commons.wikimedia.org/wiki/File:ZDF_logo.svg)                                                   | ZDF; public-domain logo artwork                                                        |
+| `das-erste.svg`    | [Das Erste](https://commons.wikimedia.org/wiki/File:Das_Erste_2014.svg)                                       | ARD; public-domain logo artwork                                                        |
+| `nuvio-legacy.svg` | [Nuvio Legacy symbol](https://github.com/iqui27/nuvio-native-legacy/blob/master/design/logo-novo/simbolo.svg) | Nuvio Legacy authors; mask baked into plain paths. Fork-only, not for upstream Luma    |
 
 ### Expanded streaming and music artwork
 

@@ -19,6 +19,7 @@ impl Brand {
             "disney-plus" => (0.72, 105.6),
             "prime-video" => (0.72, 88.),
             "jellyfin" => (0.83, 88.),
+            "nuvio-legacy" => (0.34, 92.),
             "arte" => (0.58, 88.),
             "zdf" => (0.50, 88.),
             "das-erste" => (0.70, 88.),
@@ -139,6 +140,8 @@ pub const BRANDS: &[Brand] = &[
     video("filmin", "Filmin", &["filmin"]),
     video("nrk-tv", "NRK TV", &["no.nrk.webos.smarttv"]),
     video("tv2-play", "TV 2 Play", &["tv2sumo"]),
+    // Fork-only Nuvio Legacy symbol; see ASSETS.md before proposing it upstream.
+    video("nuvio-legacy", "Nuvio Legacy", &[crate::trakt::NUVIO_APP]),
 ];
 
 pub fn for_app(id: &str) -> Option<&'static Brand> {

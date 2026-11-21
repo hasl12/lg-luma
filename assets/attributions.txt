@@ -73,6 +73,9 @@ Full notice: licenses/simple-icons.txt.
 Jellyfin artwork — Jellyfin contributors, CC BY-SA 4.0. The original gradient and source attribution are retained.
 https://github.com/jellyfin/jellyfin-ux
 
+Nuvio Legacy symbol — Nuvio Legacy authors.
+https://github.com/iqui27/nuvio-native-legacy
+
 Other app logos and device marks identify their respective products and belong to their respective owners. Some logo artwork is public domain; other artwork retains the owner's rights. Appearance here does not imply endorsement.
 
 The bundled ASSETS.md lists individual authors, source URLs, licenses, public-domain declarations and trademark notices for every curated brand asset. Compiled vector meshes retain the source artwork's license. Live installed-app artwork comes from the TV's own installed applications, not a collected icon database.
