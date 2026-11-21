@@ -163,12 +163,12 @@ CI runs this as its own isolated smoke suite. Tests never call public market fee
 
 ### Trakt continue-watching widget
 
-The widget exists only when the build sets both `LUMA_TRAKT_CLIENT_ID` and
-`LUMA_TRAKT_CLIENT_SECRET` (read with `option_env!` at compile time, for example
-`LUMA_TRAKT_CLIENT_ID=… LUMA_TRAKT_CLIENT_SECRET=… pnpm build`). Never commit these values.
-Without them the widget is not offered in the catalog, a saved `trakt.enabled` is ignored at
-startup, and no Trakt worker starts. Create a Trakt API application with the redirect URI
-`urn:ietf:wg:oauth:2.0:oob` to obtain the pair.
+The widget exists only when the build sets `LUMA_TRAKT_CLIENT_ID` (read with `option_env!` at
+compile time, for example `LUMA_TRAKT_CLIENT_ID=… pnpm build`). Newer Trakt API apps are public
+PKCE clients without a client secret; for older apps that were issued one, also set
+`LUMA_TRAKT_CLIENT_SECRET`, which is then sent with token requests and otherwise omitted. Never
+commit these values. Without a client ID the widget is not offered in the catalog, a saved
+`trakt.enabled` is ignored at startup, and no Trakt worker starts.
 
 The `trakt` preference holds `enabled` and `position` (default off, a 4×1 band at column 0,
 row 3). Settings → Widgets → Trakt → Configure has one Trakt account row. When disconnected it

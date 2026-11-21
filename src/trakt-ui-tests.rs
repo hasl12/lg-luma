@@ -220,7 +220,7 @@ fn every_language_renders_each_widget_state_and_the_login_dialog() {
             Login::Failed("traktCodeExpired"),
             Login::Code(crate::trakt::Code {
                 user_code: "5055CC52".into(),
-                url: "https://trakt.tv/activate".into(),
+                url: "https://auth.trakt.tv/activate".into(),
                 qr_size: 1,
                 qr: vec![true],
             }),

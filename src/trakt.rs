@@ -15,11 +15,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Build-time credentials. Without both, Luma does not offer the widget.
+/// Build-time credentials. Without a client ID, Luma does not offer the widget. Newer Trakt
+/// apps are public PKCE clients without a secret; older apps may still send theirs.
 const CLIENT_ID: Option<&str> = option_env!("LUMA_TRAKT_CLIENT_ID");
 const CLIENT_SECRET: Option<&str> = option_env!("LUMA_TRAKT_CLIENT_SECRET");
 const API: &str = "https://api.trakt.tv";
-const DEFAULT_VERIFICATION_URL: &str = "https://trakt.tv/activate";
+const DEFAULT_VERIFICATION_URL: &str = "https://auth.trakt.tv/activate";
 /// Items open in Nuvio Legacy; its webOS build does not route the URL yet.
 pub const NUVIO_APP: &str = "space.nuvio.native.legacy";
 pub const MAX_ITEMS: usize = 3;
@@ -32,7 +33,20 @@ const RENEW_BEFORE: i64 = 24 * 3600;
 
 pub fn configured() -> bool {
     CLIENT_ID.is_some_and(|id| !id.trim().is_empty())
-        && CLIENT_SECRET.is_some_and(|secret| !secret.trim().is_empty())
+}
+
+fn client_secret() -> Option<&'static str> {
+    CLIENT_SECRET
+        .map(str::trim)
+        .filter(|secret| !secret.is_empty())
+}
+
+/// A request body with the app's client secret only when this build has one.
+fn with_secret(mut body: Value, secret: Option<&str>) -> Value {
+    if let Some(secret) = secret {
+        body["client_secret"] = json!(secret);
+    }
+    body
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -256,8 +270,13 @@ fn parse_code(value: &Value) -> Option<(String, Code, Duration, Duration)> {
         .as_str()
         .filter(|url| {
             url.len() <= 64
-                && (url.starts_with("https://trakt.tv/")
-                    || url.starts_with("https://www.trakt.tv/"))
+                && [
+                    "https://trakt.tv/",
+                    "https://www.trakt.tv/",
+                    "https://auth.trakt.tv/",
+                ]
+                .iter()
+                .any(|origin| url.starts_with(origin))
                 && url.bytes().all(|c| c.is_ascii_graphic())
         })
         .unwrap_or(DEFAULT_VERIFICATION_URL)
@@ -319,7 +338,7 @@ impl Service {
     pub fn new(path: PathBuf, enabled: bool) -> Result<Self, String> {
         let (sender, jobs) = mpsc::sync_channel::<Command>(8);
         let (results, receiver) = mpsc::sync_channel(8);
-        let (Some(client_id), Some(secret), true) = (CLIENT_ID, CLIENT_SECRET, enabled) else {
+        let (Some(client_id), true) = (CLIENT_ID.filter(|_| configured()), enabled) else {
             return Ok(Self {
                 sender: None,
                 receiver,
@@ -337,7 +356,7 @@ impl Service {
                         .build()
                         .new_agent(),
                     client_id: client_id.trim(),
-                    secret: secret.trim(),
+                    secret: client_secret(),
                     path,
                     results,
                 }
@@ -361,7 +380,7 @@ struct Device {
 struct Worker {
     agent: ureq::Agent,
     client_id: &'static str,
-    secret: &'static str,
+    secret: Option<&'static str>,
     path: PathBuf,
     results: mpsc::SyncSender<Reply>,
 }
@@ -540,9 +559,10 @@ impl Worker {
     fn poll(&self, code: &str) -> Poll {
         let Some((status, value)) = self.request(
             "/oauth/device/token",
-            Some(
-                json!({ "code": code, "client_id": self.client_id, "client_secret": self.secret }),
-            ),
+            Some(with_secret(
+                json!({ "code": code, "client_id": self.client_id }),
+                self.secret,
+            )),
             None,
         ) else {
             return Poll::Pending;
@@ -564,13 +584,15 @@ impl Worker {
         match self
             .request(
                 "/oauth/token",
-                Some(json!({
-                    "refresh_token": token.refresh_token,
-                    "client_id": self.client_id,
-                    "client_secret": self.secret,
-                    "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
-                    "grant_type": "refresh_token",
-                })),
+                Some(with_secret(
+                    json!({
+                        "refresh_token": token.refresh_token,
+                        "client_id": self.client_id,
+                        "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
+                        "grant_type": "refresh_token",
+                    }),
+                    self.secret,
+                )),
                 None,
             )
             .ok_or(false)?
@@ -590,11 +612,10 @@ impl Worker {
     fn revoke(&self, token: &Token) {
         let _ = self.request(
             "/oauth/revoke",
-            Some(json!({
-                "token": token.access_token,
-                "client_id": self.client_id,
-                "client_secret": self.secret,
-            })),
+            Some(with_secret(
+                json!({ "token": token.access_token, "client_id": self.client_id }),
+                self.secret,
+            )),
             None,
         );
     }
@@ -893,11 +914,33 @@ mod tests {
         let (device, shown, _, interval) = parse_code(&code).unwrap();
         assert_eq!(device, "abc123");
         assert_eq!(shown.url, DEFAULT_VERIFICATION_URL);
+        let mut auth = code.clone();
+        auth["verification_url"] = json!("https://auth.trakt.tv/activate");
+        assert_eq!(
+            parse_code(&auth).unwrap().1.url,
+            "https://auth.trakt.tv/activate"
+        );
+        let mut lookalike = code.clone();
+        lookalike["verification_url"] = json!("https://auth.trakt.tv.evil.example/activate");
+        assert_eq!(
+            parse_code(&lookalike).unwrap().1.url,
+            DEFAULT_VERIFICATION_URL
+        );
         assert_eq!(interval, Duration::from_secs(5));
         assert_eq!(shown.qr.len(), (shown.qr_size * shown.qr_size) as usize);
         let mut bad = code.clone();
         bad["user_code"] = json!("<script>");
         assert!(parse_code(&bad).is_none());
+    }
+
+    #[test]
+    fn public_clients_send_no_client_secret() {
+        let body = json!({"code": "c", "client_id": "id"});
+        assert_eq!(with_secret(body.clone(), None), body);
+        assert_eq!(
+            with_secret(body, Some("s")),
+            json!({"code": "c", "client_id": "id", "client_secret": "s"})
+        );
     }
 
     #[test]
